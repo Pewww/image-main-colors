@@ -1,0 +1,245 @@
+<html>
+  <head>
+    <style>
+      #image {
+        max-height: 400px;
+      }
+
+      .box-wrapper {
+        display: flex;
+        gap: 8px;
+        margin-top: 20px;
+      }
+
+      .box {
+        width: 100px;
+        height: 100px;
+        border: 1px solid #f2f2f2;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- file input -->
+    <input type="file" id="image-input" />
+    <img id="image" />
+    <!-- 4 colors div -->
+    <h2>basic</h2>
+    <div id="colors" class="box-wrapper"></div>
+    <h2>k-means applied</h2>
+    <div id="k-colors" class="box-wrapper"></div>
+    <script>
+      function kmeans(pixels, k) {
+        // Initialize centroids randomly
+        let centroids = [];
+        for (let i = 0; i < k; i++) {
+          centroids.push(pixels[Math.floor(Math.random() * pixels.length)]);
+        }
+
+        let clusters = new Array(k);
+        let oldCentroids = [];
+        let maxIterations = 100;
+        let iterations = 0;
+
+        while (
+          !hasConverged(oldCentroids, centroids) &&
+          iterations < maxIterations
+        ) {
+          clusters = new Array(k).fill().map(() => []);
+          for (const pixel of pixels) {
+            let closestCentroidIndex = 0;
+            let closestDistance = distance(pixel, centroids[0]);
+            for (let i = 1; i < k; i++) {
+              const d = distance(pixel, centroids[i]);
+              if (d < closestDistance) {
+                closestCentroidIndex = i;
+                closestDistance = d;
+              }
+            }
+            clusters[closestCentroidIndex].push(pixel);
+          }
+
+          oldCentroids = [...centroids]; // 중심점 복사
+          // 중심점 업데이트. 빈 클러스터 처리 포함
+          centroids = clusters.map((cluster, index) => {
+            if (cluster.length === 0) {
+              // 클러스터가 비었으면 이전 중심점을 반환
+              return oldCentroids[index];
+            }
+            return mean(cluster); // defaultCentroid 필요 없음
+          });
+          iterations++;
+        }
+
+        return centroids;
+      }
+
+      function distance(a, b) {
+        return Math.sqrt(
+          Math.pow(a[0] - b[0], 2) +
+            Math.pow(a[1] - b[1], 2) +
+            Math.pow(a[2] - b[2], 2)
+        );
+      }
+
+      function mean(cluster) {
+        if (cluster.length === 0) {
+          throw new Error("빈 클러스터에 대한 mean 계산은 불가능합니다.");
+        }
+
+        const total = cluster.reduce(
+          (sum, pixel) => {
+            sum[0] += pixel[0];
+            sum[1] += pixel[1];
+            sum[2] += pixel[2];
+            return sum;
+          },
+          [0, 0, 0]
+        );
+
+        return total.map((value) => Math.round(value / cluster.length));
+      }
+
+      function hasConverged(oldCentroids, centroids) {
+        if (!oldCentroids.length) return false;
+        for (let i = 0; i < centroids.length; i++) {
+          if (distance(oldCentroids[i], centroids[i]) !== 0) return false;
+        }
+        return true;
+      }
+
+      class CanvasImage {
+        constructor(image) {
+          this.canvas = document.createElement("canvas");
+          this.ctx = this.canvas.getContext("2d");
+
+          this.image = image;
+        }
+
+        drawImage() {
+          return new Promise((resolve) => {
+            const image = new Image();
+            image.setAttribute("src", this.image);
+            image.setAttribute("crossOrigin", "anonymous");
+
+            image.onload = () => {
+              this.ctx.canvas.width = image.width;
+              this.ctx.canvas.height = image.height;
+              this.ctx.drawImage(image, 0, 0);
+
+              resolve(image);
+            };
+          });
+        }
+
+        async getImageData({
+          x = 0,
+          y = 0,
+          width: propsWidth = 0,
+          height: propsHeight = 0,
+        } = {}) {
+          const { width: _width, height: _height } = await this.drawImage();
+
+          const width =
+            propsWidth !== 0 && propsWidth < _width ? propsWidth : _width;
+
+          const height =
+            propsHeight !== 0 && propsHeight < _height ? propsHeight : _height;
+
+          return this.ctx.getImageData(x, y, width, height);
+        }
+      }
+
+      const componentToHex = (c) => {
+        const hex = c.toString(16);
+        return hex.length == 1 ? "0" + hex : hex;
+      };
+
+      const rgbToHex = (r, g, b) => {
+        return "#" + componentToHex(r) + componentToHex(g) + componentToHex(b);
+      };
+
+      function extractColors(imgData) {
+        const pixels = imgData.length;
+        const colors = {};
+        const newData = [];
+
+        for (let idx = 0; idx < pixels; idx += 4) {
+          const r = imgData[idx + 0];
+          const g = imgData[idx + 1];
+          const b = imgData[idx + 2];
+
+          newData.push([r, g, b]);
+        }
+
+        return newData;
+      }
+
+      function basicMode(colors) {
+        const c = {};
+
+        colors.forEach((rgb) => {
+          const hexColor = rgbToHex(...rgb);
+
+          if (hexColor in c) {
+            c[hexColor] += 1;
+          } else {
+            c[hexColor] = 0;
+          }
+        });
+
+        const sortedKeys = Object.keys(c).sort((a, b) => c[b] - c[a]);
+
+        return [sortedKeys[0], sortedKeys[1], sortedKeys[2], sortedKeys[3]];
+      }
+
+      const imageInput = document.getElementById("image-input");
+      const colorsElement = document.getElementById("colors");
+      const kColorsElement = document.getElementById("k-colors");
+
+      imageInput.onchange = (e) => {
+        const selectedFile = e.target.files[0];
+        const fileReader = new FileReader();
+
+        const imgTag = document.getElementById("image");
+
+        fileReader.onload = async function (event) {
+          const value = event.target.result;
+
+          imgTag.src = value;
+
+          const canvasImage = new CanvasImage(value);
+          const { data: imgData } = await canvasImage.getImageData();
+
+          const pixels = extractColors(imgData);
+
+          // basic
+          const basicColors = basicMode(pixels);
+
+          basicColors.forEach((hexColor) => {
+            const boxElement = document.createElement("div");
+            boxElement.setAttribute("class", "box");
+            boxElement.style.backgroundColor = hexColor;
+
+            colorsElement.append(boxElement);
+          });
+
+          // k-means
+          const clusters = 4;
+          const centroids = kmeans(pixels, clusters);
+
+          centroids.forEach((rgb) => {
+            const hexColor = rgbToHex(...rgb);
+
+            const boxElement = document.createElement("div");
+            boxElement.setAttribute("class", "box");
+            boxElement.style.backgroundColor = hexColor;
+
+            kColorsElement.append(boxElement);
+          });
+        };
+
+        fileReader.readAsDataURL(selectedFile);
+      };
+    </script>
+  </body>
+</html>
